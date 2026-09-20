@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>RistoHub — Admin Menù</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; background: #fafafa; color: #222; }
+  h1 { font-size: 22px; }
+  form { display: grid; grid-template-columns: 2fr 3fr 1.5fr 1fr auto; gap: 8px; margin-bottom: 24px; }
+  input, select { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  button { padding: 8px 14px; border: none; border-radius: 6px; background: #1a1a1a; color: white; cursor: pointer; }
+  button.danger { background: #b3261e; }
+  button.secondary { background: #6b6b6b; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; font-size: 14px; }
+  th { background: #f0f0f0; }
+  .actions { display: flex; gap: 6px; }
+  .category-tag { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #e0e0e0; }
+  #status { margin: 10px 0; font-size: 13px; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>RistoHub — Gestione Menù</h1>
+<div id="status"></div>
+
+<form id="menu-form">
+  <input type="hidden" id="item-id">
+  <input type="text" id="name" placeholder="Nome pizza" required>
+  <input type="text" id="description" placeholder="Ingredienti / descrizione">
+  <select id="category" required>
+    <option value="pizze-classiche">Pizze Classiche</option>
+    <option value="pizze-gourmet">Pizze Gourmet</option>
+  </select>
+  <input type="number" id="price" placeholder="Prezzo" step="0.5" min="0" required>
+  <button type="submit" id="submit-btn">Aggiungi</button>
+</form>
+<button type="button" class="secondary" id="cancel-edit" style="display:none; margin-bottom:16px;">Annulla modifica</button>
+
+<table>
+  <thead>
+    <tr><th>Nome</th><th>Descrizione</th><th>Categoria</th><th>Prezzo</th><th>Azioni</th></tr>
+  </thead>
+  <tbody id="menu-table-body"></tbody>
+</table>
+
+<script>
+const API_URL = "http://localhost:8000/menu";
+const form = document.getElementById("menu-form");
+const tableBody = document.getElementById("menu-table-body");
+const statusEl = document.getElementById("status");
+const submitBtn = document.getElementById("submit-btn");
+const cancelBtn = document.getElementById("cancel-edit");
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.style.color = isError ? "#b3261e" : "#555";
+}
+
+async function loadMenu() {
+  setStatus("Caricamento...");
+  try {
+    const res = await fetch(API_URL);
+    const items = await res.json();
+    tableBody.innerHTML = "";
+    items.forEach(item => {
+      const tr = document.createElement("tr");
+      tr.draggable = true;
+      tr.dataset.id = item.id;
+      tr.innerHTML = `
+        <td style="cursor: grab;">&#9776; ${item.name}</td>
+        <td>${item.description || ""}</td>
+        <td><span class="category-tag">${item.category}</span></td>
+        <td>€${item.price.toFixed(2)}</td>
+        <td class="actions">
+          <button type="button" onclick="editItem(${item.id}, '${item.name.replace(/'/g,"\\'")}', '${(item.description||'').replace(/'/g,"\\'")}', '${item.category}', ${item.price})">Modifica</button>
+          <button type="button" class="danger" onclick="deleteItem(${item.id})">Elimina</button>
+        </td>`;
+      tableBody.appendChild(tr);
+    });
+    setStatus(`${items.length} piatti nel menù. Trascina le righe per riordinarle.`);
+    enableDragAndDrop();
+  } catch (e) {
+    setStatus("Errore nel caricamento del menù. Il server è attivo su localhost:8000?", true);
+  }
+}
+
+let draggedRow = null;
+
+function enableDragAndDrop() {
+  const rows = tableBody.querySelectorAll("tr");
+  rows.forEach(row => {
+    row.addEventListener("dragstart", () => {
+      draggedRow = row;
+      row.style.opacity = "0.4";
+    });
+    row.addEventListener("dragend", () => {
+      row.style.opacity = "1";
+      saveOrder();
+    });
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      const afterRow = getRowAfter(tableBody, e.clientY);
+      if (afterRow == null) {
+        tableBody.appendChild(draggedRow);
+      } else {
+        tableBody.insertBefore(draggedRow, afterRow);
+      }
+    });
+  });
+}
+
+function getRowAfter(container, y) {
+  const rows = [...container.querySelectorAll("tr:not([style*='opacity: 0.4'])")];
+  return rows.reduce((closest, row) => {
+    const box = row.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset, element: row };
+    } else {
+      return closest;
+    }
+  }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+}
+
+async function saveOrder() {
+  const ids = [...tableBody.querySelectorAll("tr")].map(row => parseInt(row.dataset.id));
+  try {
+    await fetch(`${API_URL}/reorder`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ordered_ids: ids }),
+    });
+    setStatus("Ordine salvato.");
+  } catch (e) {
+    setStatus("Errore nel salvataggio dell'ordine.", true);
+  }
+}
+
+function editItem(id, name, description, category, price) {
+  document.getElementById("item-id").value = id;
+  document.getElementById("name").value = name;
+  document.getElementById("description").value = description;
+  document.getElementById("category").value = category;
+  document.getElementById("price").value = price;
+  submitBtn.textContent = "Salva modifica";
+  cancelBtn.style.display = "inline-block";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetForm() {
+  form.reset();
+  document.getElementById("item-id").value = "";
+  submitBtn.textContent = "Aggiungi";
+  cancelBtn.style.display = "none";
+}
+
+cancelBtn.addEventListener("click", resetForm);
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("item-id").value;
+  const payload = {
+    name: document.getElementById("name").value,
+    description: document.getElementById("description").value,
+    category: document.getElementById("category").value,
+    price: parseFloat(document.getElementById("price").value),
+  };
+
+  try {
+    const res = await fetch(id ? `${API_URL}/${id}` : API_URL, {
+      method: id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    setStatus(id ? "Piatto aggiornato." : "Piatto aggiunto.");
+    resetForm();
+    loadMenu();
+  } catch (err) {
+    setStatus("Errore: " + err.message, true);
+  }
+});
+
+async function deleteItem(id) {
+  if (!confirm("Eliminare questo piatto dal menù?")) return;
+  try {
+    const res = await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+    setStatus("Piatto eliminato.");
+    loadMenu();
+  } catch (err) {
+    setStatus("Errore: " + err.message, true);
+  }
+}
+
+loadMenu();
+</script>
+</body>
+</html>

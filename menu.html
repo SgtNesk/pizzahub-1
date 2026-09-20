@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RistoHub — Il nostro Menù</title>
+<style>
+  :root {
+    --accent: #b3261e;
+    --bg: #fdfbf7;
+    --text: #2b2b2b;
+    --muted: #7a7a7a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: var(--bg);
+    color: var(--text);
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+  header { text-align: center; margin-bottom: 48px; }
+  header h1 {
+    font-size: 32px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  header p { color: var(--muted); font-size: 14px; margin-top: 8px; font-style: italic; }
+  .category-block { margin-bottom: 40px; }
+  .category-title {
+    font-size: 20px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+    color: var(--accent);
+  }
+  .menu-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .item-info { flex: 1; }
+  .item-name { font-size: 17px; font-weight: bold; }
+  .item-desc { font-size: 14px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .item-price {
+    font-size: 16px;
+    font-weight: bold;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+  #status { text-align: center; color: var(--muted); font-size: 14px; padding: 40px 0; }
+  .divider-dots {
+    flex: 1;
+    border-bottom: 1px dotted #ccc;
+    margin: 0 8px 6px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RistoHub</h1>
+  <p>La nostra carta — a cura della cucina</p>
+</header>
+
+<div id="menu-container">
+  <div id="status">Caricamento menù...</div>
+</div>
+
+<script>
+const API_URL = "http://localhost:8000/menu";
+
+const CATEGORY_LABELS = {
+  "pizze-classiche": "Pizze Classiche",
+  "pizze-gourmet": "Pizze Gourmet",
+};
+
+async function loadMenu() {
+  const container = document.getElementById("menu-container");
+  try {
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error("Errore nel caricamento");
+    const items = await res.json();
+
+    if (items.length === 0) {
+      container.innerHTML = `<div id="status">Il menù sarà disponibile a breve.</div>`;
+      return;
+    }
+
+    // Raggruppa per categoria
+    const grouped = {};
+    items.forEach(item => {
+      if (!grouped[item.category]) grouped[item.category] = [];
+      grouped[item.category].push(item);
+    });
+
+    container.innerHTML = "";
+    Object.keys(grouped).forEach(category => {
+      const block = document.createElement("div");
+      block.className = "category-block";
+
+      const label = CATEGORY_LABELS[category] || category;
+      block.innerHTML = `<div class="category-title">${label}</div>`;
+
+      grouped[category].forEach(item => {
+        const row = document.createElement("div");
+        row.className = "menu-item";
+        row.innerHTML = `
+          <div class="item-info">
+            <div class="item-name">${item.name}</div>
+            ${item.description ? `<div class="item-desc">${item.description}</div>` : ""}
+          </div>
+          <div class="item-price">€${item.price.toFixed(2)}</div>
+        `;
+        block.appendChild(row);
+      });
+
+      container.appendChild(block);
+    });
+  } catch (e) {
+    container.innerHTML = `<div id="status">Impossibile caricare il menù al momento.</div>`;
+  }
+}
+
+loadMenu();
+</script>
+</body>
+</html>

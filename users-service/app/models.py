@@ -23,3 +23,4 @@ class MenuItem(Base):
     category = Column(String, nullable=False)  # es. antipasti, primi, vini
     price = Column(Float, nullable=False)
     is_available = Column(Integer, default=1)  # 1=true, 0=false (semplice per ora)
+    sort_order = Column(Integer, default=0)

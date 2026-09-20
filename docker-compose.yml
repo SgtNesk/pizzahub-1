@@ -1,4 +1,3 @@
-# docker-compose.yml
 version: "3.9"
 
 services:
@@ -13,6 +12,16 @@ services:
       - "5432:5432"
     volumes:
       - ristohub_pgdata:/var/lib/postgresql/data
+
+  users-service:
+    build: ./users-service
+    container_name: ristohub-users-service
+    environment:
+      DATABASE_URL: postgresql://ristohub:ristohub@db:5432/ristohub_db
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
 
 volumes:
   ristohub_pgdata:
