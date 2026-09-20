@@ -1,0 +1,18 @@
+# docker-compose.yml
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: ristohub-db
+    environment:
+      POSTGRES_USER: ristohub
+      POSTGRES_PASSWORD: ristohub
+      POSTGRES_DB: ristohub_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ristohub_pgdata:/var/lib/postgresql/data
+
+volumes:
+  ristohub_pgdata:
