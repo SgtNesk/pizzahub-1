@@ -1,10 +1,13 @@
 # app/main.py
 import uuid
+from datetime import datetime, timedelta
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
+from jose import jwt
 
 from app.database import engine, get_db, Base
 from app import models
@@ -12,7 +15,6 @@ from app import models
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="RistoHub - Users Service")
-from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,7 +22,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+SECRET_KEY = "cambia-questa-chiave-in-produzione-con-una-lunga-e-random"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 # ---------- SCHEMI: Utenti ----------
@@ -40,6 +53,14 @@ class UserOut(BaseModel):
     class Config:
         from_attributes = True
 
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
 
 # ---------- SCHEMI: Menù ----------
 
@@ -56,13 +77,15 @@ class MenuItemOut(BaseModel):
     category: str
     price: float
     is_available: int
-    sort_order: int 
+    sort_order: int
 
     class Config:
         from_attributes = True
 
 class ReorderRequest(BaseModel):
-    ordered_ids: List[int] 
+    ordered_ids: List[int]
+
+
 # ---------- ENDPOINT: Utenti ----------
 
 @app.post("/users/register", response_model=UserOut)
@@ -87,6 +110,16 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 
+@app.post("/users/login", response_model=Token)
+def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == credentials.email).first()
+    if not user or not pwd_context.verify(credentials.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Email o password errati")
+
+    token = create_access_token({"sub": str(user.id), "email": user.email})
+    return {"access_token": token, "token_type": "bearer"}
+
+
 # ---------- ENDPOINT: Menù ----------
 
 @app.post("/menu", response_model=MenuItemOut)
@@ -102,6 +135,7 @@ def create_menu_item(item: MenuItemCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_item)
     return new_item
+
 
 @app.put("/menu/{item_id}", response_model=MenuItemOut)
 def update_menu_item(item_id: int, item: MenuItemCreate, db: Session = Depends(get_db)):
@@ -122,24 +156,7 @@ def get_menu(category: str | None = None, db: Session = Depends(get_db)):
     query = db.query(models.MenuItem)
     if category:
         query = query.filter(models.MenuItem.category == category)
-    return query.all()
-
-
-@app.delete("/menu/{item_id}")
-def delete_menu_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(models.MenuItem).filter(models.MenuItem.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Piatto non trovato")
-    db.delete(item)
-    db.commit()
-    return {"detail": "Eliminato"}
-
-@app.get("/menu", response_model=List[MenuItemOut])
-def get_menu(category: str | None = None, db: Session = Depends(get_db)):
-    query = db.query(models.MenuItem)
-    if category:
-        query = query.filter(models.MenuItem.category == category)
-    return query.order_by(models.MenuItem.sort_order).all()  # MODIFICATO: ordina
+    return query.order_by(models.MenuItem.sort_order).all()
 
 
 @app.put("/menu/reorder")
@@ -150,7 +167,16 @@ def reorder_menu(payload: ReorderRequest, db: Session = Depends(get_db)):
         )
     db.commit()
     return {"detail": "Ordine aggiornato"}
-        
+
+
+@app.delete("/menu/{item_id}")
+def delete_menu_item(item_id: int, db: Session = Depends(get_db)):
+    item = db.query(models.MenuItem).filter(models.MenuItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Piatto non trovato")
+    db.delete(item)
+    db.commit()
+    return {"detail": "Eliminato"}
 
 
 # ---------- Health check ----------
