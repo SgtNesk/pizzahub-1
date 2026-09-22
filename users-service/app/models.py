@@ -24,3 +24,20 @@ class MenuItem(Base):
     price = Column(Float, nullable=False)
     is_available = Column(Integer, default=1)  # 1=true, 0=false (semplice per ora)
     sort_order = Column(Integer, default=0)
+
+class Ingredient(Base):
+    __tablename__ = "ingredients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    unit = Column(String, nullable=False)  # es. "g", "kg", "ml", "pz"
+    cost_per_unit = Column(Float, nullable=False)  # costo per unità (es. costo al grammo)
+    supplier = Column(String)
+
+class RecipeItem(Base):
+    __tablename__ = "recipe_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    menu_item_id = Column(Integer, nullable=False)  # collegato a MenuItem.id
+    ingredient_id = Column(Integer, nullable=False)  # collegato a Ingredient.id
+    quantity = Column(Float, nullable=False)  # quantità usata nella ricetta, stessa unità dell'ingrediente

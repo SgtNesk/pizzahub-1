@@ -178,6 +178,92 @@ def delete_menu_item(item_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"detail": "Eliminato"}
 
+# ---------- SCHEMI: Food Cost ----------
+
+class IngredientCreate(BaseModel):
+    name: str
+    unit: str
+    cost_per_unit: float
+    supplier: str | None = None
+
+class IngredientOut(IngredientCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+class RecipeItemCreate(BaseModel):
+    menu_item_id: int
+    ingredient_id: int
+    quantity: float
+
+class RecipeItemOut(RecipeItemCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+class MenuItemCostOut(BaseModel):
+    menu_item_id: int
+    menu_item_name: str
+    price: float
+    total_cost: float
+    food_cost_percentage: float
+
+
+# ---------- ENDPOINT: Ingredienti ----------
+
+@app.post("/ingredients", response_model=IngredientOut)
+def create_ingredient(item: IngredientCreate, db: Session = Depends(get_db)):
+    new_item = models.Ingredient(**item.dict())
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return new_item
+
+@app.get("/ingredients", response_model=List[IngredientOut])
+def list_ingredients(db: Session = Depends(get_db)):
+    return db.query(models.Ingredient).all()
+
+
+# ---------- ENDPOINT: Ricette ----------
+
+@app.post("/recipes", response_model=RecipeItemOut)
+def add_recipe_item(item: RecipeItemCreate, db: Session = Depends(get_db)):
+    new_item = models.RecipeItem(**item.dict())
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return new_item
+
+@app.get("/recipes/{menu_item_id}", response_model=List[RecipeItemOut])
+def get_recipe(menu_item_id: int, db: Session = Depends(get_db)):
+    return db.query(models.RecipeItem).filter(models.RecipeItem.menu_item_id == menu_item_id).all()
+
+
+# ---------- ENDPOINT: Food Cost calcolato ----------
+
+@app.get("/food-cost/{menu_item_id}", response_model=MenuItemCostOut)
+def get_food_cost(menu_item_id: int, db: Session = Depends(get_db)):
+    menu_item = db.query(models.MenuItem).filter(models.MenuItem.id == menu_item_id).first()
+    if not menu_item:
+        raise HTTPException(status_code=404, detail="Piatto non trovato")
+
+    recipe_items = db.query(models.RecipeItem).filter(models.RecipeItem.menu_item_id == menu_item_id).all()
+    total_cost = 0.0
+    for ri in recipe_items:
+        ingredient = db.query(models.Ingredient).filter(models.Ingredient.id == ri.ingredient_id).first()
+        if ingredient:
+            total_cost += ingredient.cost_per_unit * ri.quantity
+
+    food_cost_pct = (total_cost / menu_item.price * 100) if menu_item.price > 0 else 0
+
+    return {
+        "menu_item_id": menu_item.id,
+        "menu_item_name": menu_item.name,
+        "price": menu_item.price,
+        "total_cost": round(total_cost, 2),
+        "food_cost_percentage": round(food_cost_pct, 2),
+    }
+
 
 # ---------- Health check ----------
 
