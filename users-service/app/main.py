@@ -4,10 +4,11 @@ from datetime import datetime, timedelta
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from jose import jwt
+from jose import jwt, JWTError
 
 from app.database import engine, get_db, Base
 from app import models
@@ -18,12 +19,13 @@ app = FastAPI(title="RistoHub - Users Service")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # per sviluppo; da restringere in produzione
+    allow_origins=["*"],  # da restringere a ristohub.abicose.com prima del deploy definitivo
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer()
 
 SECRET_KEY = "cambia-questa-chiave-in-produzione-con-una-lunga-e-random"
 ALGORITHM = "HS256"
@@ -34,6 +36,22 @@ def create_access_token(data: dict):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token non valido")
+    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Utente non trovato")
+    return user
+
+def get_current_admin(user: models.User = Depends(get_current_user)):
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Accesso riservato agli admin")
+    return user
 
 
 # ---------- SCHEMI: Utenti ----------
@@ -49,6 +67,7 @@ class UserOut(BaseModel):
     full_name: str
     card_id: str
     points: int
+    is_admin: int
 
     class Config:
         from_attributes = True
@@ -86,6 +105,37 @@ class ReorderRequest(BaseModel):
     ordered_ids: List[int]
 
 
+# ---------- SCHEMI: Food Cost ----------
+
+class IngredientCreate(BaseModel):
+    name: str
+    unit: str
+    cost_per_unit: float
+    supplier: str | None = None
+
+class IngredientOut(IngredientCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+class RecipeItemCreate(BaseModel):
+    menu_item_id: int
+    ingredient_id: int
+    quantity: float
+
+class RecipeItemOut(RecipeItemCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+class MenuItemCostOut(BaseModel):
+    menu_item_id: int
+    menu_item_name: str
+    price: float
+    total_cost: float
+    food_cost_percentage: float
+
+
 # ---------- ENDPOINT: Utenti ----------
 
 @app.post("/users/register", response_model=UserOut)
@@ -120,10 +170,26 @@ def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer"}
 
 
+@app.get("/users/me", response_model=UserOut)
+def read_current_user(user: models.User = Depends(get_current_user)):
+    return user
+
+
+@app.post("/users/make-admin/{user_id}")
+def make_admin(user_id: int, db: Session = Depends(get_db)):
+    # NOTA: endpoint di bootstrap, senza protezione — disattivarlo o proteggerlo dopo aver creato il primo admin
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    user.is_admin = 1
+    db.commit()
+    return {"detail": f"{user.email} è ora admin"}
+
+
 # ---------- ENDPOINT: Menù ----------
 
 @app.post("/menu", response_model=MenuItemOut)
-def create_menu_item(item: MenuItemCreate, db: Session = Depends(get_db)):
+def create_menu_item(item: MenuItemCreate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     new_item = models.MenuItem(
         name=item.name,
         description=item.description,
@@ -138,7 +204,7 @@ def create_menu_item(item: MenuItemCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/menu/{item_id}", response_model=MenuItemOut)
-def update_menu_item(item_id: int, item: MenuItemCreate, db: Session = Depends(get_db)):
+def update_menu_item(item_id: int, item: MenuItemCreate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     existing = db.query(models.MenuItem).filter(models.MenuItem.id == item_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail="Piatto non trovato")
@@ -160,7 +226,7 @@ def get_menu(category: str | None = None, db: Session = Depends(get_db)):
 
 
 @app.put("/menu/reorder")
-def reorder_menu(payload: ReorderRequest, db: Session = Depends(get_db)):
+def reorder_menu(payload: ReorderRequest, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     for position, item_id in enumerate(payload.ordered_ids):
         db.query(models.MenuItem).filter(models.MenuItem.id == item_id).update(
             {"sort_order": position}
@@ -170,7 +236,7 @@ def reorder_menu(payload: ReorderRequest, db: Session = Depends(get_db)):
 
 
 @app.delete("/menu/{item_id}")
-def delete_menu_item(item_id: int, db: Session = Depends(get_db)):
+def delete_menu_item(item_id: int, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     item = db.query(models.MenuItem).filter(models.MenuItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Piatto non trovato")
@@ -178,41 +244,11 @@ def delete_menu_item(item_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"detail": "Eliminato"}
 
-# ---------- SCHEMI: Food Cost ----------
-
-class IngredientCreate(BaseModel):
-    name: str
-    unit: str
-    cost_per_unit: float
-    supplier: str | None = None
-
-class IngredientOut(IngredientCreate):
-    id: int
-    class Config:
-        from_attributes = True
-
-class RecipeItemCreate(BaseModel):
-    menu_item_id: int
-    ingredient_id: int
-    quantity: float
-
-class RecipeItemOut(RecipeItemCreate):
-    id: int
-    class Config:
-        from_attributes = True
-
-class MenuItemCostOut(BaseModel):
-    menu_item_id: int
-    menu_item_name: str
-    price: float
-    total_cost: float
-    food_cost_percentage: float
-
 
 # ---------- ENDPOINT: Ingredienti ----------
 
 @app.post("/ingredients", response_model=IngredientOut)
-def create_ingredient(item: IngredientCreate, db: Session = Depends(get_db)):
+def create_ingredient(item: IngredientCreate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     new_item = models.Ingredient(**item.dict())
     db.add(new_item)
     db.commit()
@@ -227,7 +263,7 @@ def list_ingredients(db: Session = Depends(get_db)):
 # ---------- ENDPOINT: Ricette ----------
 
 @app.post("/recipes", response_model=RecipeItemOut)
-def add_recipe_item(item: RecipeItemCreate, db: Session = Depends(get_db)):
+def add_recipe_item(item: RecipeItemCreate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     new_item = models.RecipeItem(**item.dict())
     db.add(new_item)
     db.commit()

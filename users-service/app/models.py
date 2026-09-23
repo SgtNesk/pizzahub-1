@@ -13,6 +13,7 @@ class User(Base):
     card_id = Column(String, unique=True, index=True, nullable=False)  # tessera digitale
     points = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    is_admin = Column(Integer, default=0)  # 0 = utente normale, 1 = admin
 
 class MenuItem(Base):
     __tablename__ = "menu_items"
